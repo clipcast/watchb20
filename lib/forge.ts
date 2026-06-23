@@ -1,54 +1,69 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
+import { writeFile, unlink, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const execAsync = promisify(exec);
-
-export interface DeployParams {
-  name: string;
-  symbol: string;
-  maxSupply?: string;
+export interface ForgeResult {
+  success: boolean;
+  output: string;
+  tokenAddress?: string;
 }
 
-export interface DeployResult {
-  address?: string;
-  txHash?: string;
-  raw: string;
-}
+const ADDRESS_RE = /(?:token deployed at|deployed to|contract address)[:\s]+(0x[a-fA-F0-9]{40})/i;
 
 /**
- * Run the base-forge CLI to deploy a B20 token contract.
- * Server-side only. Requires BASE_FORGE_PATH and DEPLOYER_PRIVATE_KEY.
+ * Run a base-forge script from Node. Writes the script to a temp file,
+ * spawns base-forge with the given env vars, parses the deployed address,
+ * enforces a 60s timeout, and cleans up the temp file.
  */
-export async function runForgeDeploy(
-  params: DeployParams
-): Promise<DeployResult> {
-  const forge = process.env.BASE_FORGE_PATH ?? "base-forge";
-  const { name, symbol, maxSupply = "0" } = params;
+export async function runForgeScript(
+  scriptContent: string,
+  envVars: Record<string, string>
+): Promise<ForgeResult> {
+  const dir = await mkdtemp(join(tmpdir(), "watchb20-"));
+  const scriptPath = join(dir, "Deploy.s.sol");
+  await writeFile(scriptPath, scriptContent, "utf8");
 
-  // NOTE: arguments are passed positionally — adjust to your base-forge schema.
-  const cmd = [
-    forge,
-    "deploy-b20",
-    `--name ${JSON.stringify(name)}`,
-    `--symbol ${JSON.stringify(symbol)}`,
-    `--max-supply ${JSON.stringify(maxSupply)}`,
-    "--json",
-  ].join(" ");
+  return new Promise<ForgeResult>((resolve) => {
+    const child = spawn(
+      "base-forge",
+      [
+        "script",
+        scriptPath,
+        "--rpc-url",
+        envVars.RPC_URL ?? "https://sepolia.base.org",
+        "--broadcast",
+      ],
+      { env: { ...process.env, ...envVars } }
+    );
 
-  const { stdout } = await execAsync(cmd, {
-    env: process.env,
-    timeout: 120_000,
+    let output = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, 60_000);
+
+    child.stdout.on("data", (d: Buffer) => {
+      output += d.toString();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      output += d.toString();
+    });
+
+    child.on("close", async (code) => {
+      clearTimeout(timer);
+      await unlink(scriptPath).catch(() => {});
+      const match = output.match(ADDRESS_RE);
+      resolve({
+        success: code === 0,
+        output,
+        tokenAddress: match?.[1],
+      });
+    });
+
+    child.on("error", async (err) => {
+      clearTimeout(timer);
+      await unlink(scriptPath).catch(() => {});
+      resolve({ success: false, output: err.message });
+    });
   });
-
-  let address: string | undefined;
-  let txHash: string | undefined;
-  try {
-    const parsed = JSON.parse(stdout);
-    address = parsed.address ?? parsed.token;
-    txHash = parsed.txHash ?? parsed.transactionHash;
-  } catch {
-    // base-forge did not return JSON — return raw output
-  }
-
-  return { address, txHash, raw: stdout };
 }

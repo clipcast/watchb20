@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import { Providers } from "./providers";
+import { Inter } from "next/font/google";
+import { Providers } from "@/components/Providers";
+import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "watchb20 — B20 on Base",
-  description: "Deploy, track, mint/burn & transfer B20 tokens on Base",
+  title: "WatchB20 | B20 Token Launcher on Base",
+  description: "Deploy, track, mint, and transfer B20 tokens on Base",
 };
 
 export default function RootLayout({
@@ -12,8 +16,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" className="dark">
+      <body className={`${inter.className} bg-[#07080d] text-white min-h-screen`}>
         <Providers>{children}</Providers>
       </body>
     </html>

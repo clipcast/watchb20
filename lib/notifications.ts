@@ -1,46 +1,64 @@
-export interface NotifyParams {
-  token: string;
+const BASE_API = "https://dashboard.base.org/api/v1";
+
+export interface NotificationPayload {
+  walletAddresses: string[];
   title: string;
-  message?: string;
+  message: string;
+  targetPath?: string;
+  appUrl?: string;
 }
 
-export interface NotifyResult {
-  ok: boolean;
-  status: number;
-  body?: unknown;
+export interface NotificationResult {
+  success: boolean;
+  sentCount: number;
+  failedCount: number;
+  results?: unknown;
+  error?: string;
 }
 
-/**
- * Wrapper around the Base Notifications API.
- * Requires BASE_NOTIFY_API_URL and BASE_NOTIFY_API_KEY.
- */
-export async function sendBaseNotification(
-  params: NotifyParams
-): Promise<NotifyResult> {
-  const url = process.env.BASE_NOTIFY_API_URL;
-  const key = process.env.BASE_NOTIFY_API_KEY;
+export interface UserStatus {
+  walletAddress: string;
+  notificationEnabled: boolean;
+}
 
-  if (!url || !key) {
-    throw new Error(
-      "BASE_NOTIFY_API_URL and BASE_NOTIFY_API_KEY must be set"
-    );
-  }
-
-  const res = await fetch(url, {
+/** Send a notification by calling our own /api/notify route (keeps API key server-side). */
+export async function sendNotification(
+  payload: NotificationPayload
+): Promise<NotificationResult> {
+  const res = await fetch("/api/notify", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(params),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
+  return (await res.json()) as NotificationResult;
+}
 
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    body = await res.text();
-  }
+/** Check a single user's notification opt-in status. */
+export async function getUserNotificationStatus(
+  walletAddress: string,
+  appUrl: string
+): Promise<UserStatus> {
+  const url = `${BASE_API}/notifications/app/user/status?address=${encodeURIComponent(
+    walletAddress
+  )}&app_url=${encodeURIComponent(appUrl)}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": process.env.BASE_NOTIFICATIONS_API_KEY ?? "" },
+  });
+  const data = (await res.json()) as { notification_enabled?: boolean };
+  return {
+    walletAddress,
+    notificationEnabled: Boolean(data.notification_enabled),
+  };
+}
 
-  return { ok: res.ok, status: res.status, body };
+/** List wallet addresses that have opted in to notifications for this app. */
+export async function getOptedInUsers(appUrl: string): Promise<string[]> {
+  const url = `${BASE_API}/notifications/app/users?notification_enabled=true&app_url=${encodeURIComponent(
+    appUrl
+  )}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": process.env.BASE_NOTIFICATIONS_API_KEY ?? "" },
+  });
+  const data = (await res.json()) as { users?: { address: string }[] };
+  return (data.users ?? []).map((u) => u.address);
 }

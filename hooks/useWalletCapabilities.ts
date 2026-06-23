@@ -1,42 +1,28 @@
 "use client";
 
-import { useAccount } from "wagmi";
-import { useEffect, useState } from "react";
+import { useCapabilities } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
 
-/**
- * EIP-5792 wallet capabilities detection.
- * Checks whether the connected wallet supports atomic batch calls.
- */
-export function useWalletCapabilities() {
-  const { connector, address, chainId } = useAccount();
-  const [supportsBatch, setSupportsBatch] = useState(false);
-  const [capabilities, setCapabilities] = useState<unknown>(null);
+export interface WalletCapabilities {
+  supportsBatching: boolean;
+  supportsPaymaster: boolean;
+}
 
-  useEffect(() => {
-    let cancelled = false;
+/** EIP-5792 wallet capability detection (atomic batch + paymaster). */
+export function useWalletCapabilities(): WalletCapabilities {
+  const { data } = useCapabilities();
 
-    async function check() {
-      if (!connector || !address) return;
-      try {
-        const provider: any = await connector.getProvider();
-        const caps = await provider.request({
-          method: "wallet_getCapabilities",
-          params: [address],
-        });
-        if (cancelled) return;
-        setCapabilities(caps);
-        const chainCaps = chainId ? caps?.[`0x${chainId.toString(16)}`] : undefined;
-        setSupportsBatch(Boolean(chainCaps?.atomicBatch?.supported));
-      } catch {
-        if (!cancelled) setSupportsBatch(false);
+  const chainCaps = data?.[baseSepolia.id] as
+    | {
+        atomic?: { status?: string };
+        paymasterService?: { supported?: boolean };
       }
-    }
+    | undefined;
 
-    check();
-    return () => {
-      cancelled = true;
-    };
-  }, [connector, address, chainId]);
+  const atomicStatus = chainCaps?.atomic?.status;
+  const supportsBatching =
+    atomicStatus === "ready" || atomicStatus === "supported";
+  const supportsPaymaster = chainCaps?.paymasterService?.supported === true;
 
-  return { supportsBatch, capabilities };
+  return { supportsBatching, supportsPaymaster };
 }

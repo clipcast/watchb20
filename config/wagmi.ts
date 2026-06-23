@@ -1,23 +1,22 @@
-import { http, createConfig } from "wagmi";
-import { base } from "wagmi/chains";
-import { injected, walletConnect } from "wagmi/connectors";
+import { http, createConfig, cookieStorage, createStorage } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
+import { injected, coinbaseWallet } from "wagmi/connectors";
 
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "";
-
-export const wagmiConfig = createConfig({
-  chains: [base],
+export const config = createConfig({
+  chains: [baseSepolia],
   connectors: [
     injected(),
-    ...(projectId ? [walletConnect({ projectId })] : []),
+    coinbaseWallet({ appName: "WatchB20" }),
   ],
-  transports: {
-    [base.id]: http(process.env.NEXT_PUBLIC_RPC_URL ?? "https://mainnet.base.org"),
-  },
   ssr: true,
+  storage: createStorage({ storage: cookieStorage }),
+  transports: {
+    [baseSepolia.id]: http("https://sepolia.base.org"),
+  },
 });
 
 declare module "wagmi" {
   interface Register {
-    config: typeof wagmiConfig;
+    config: typeof config;
   }
 }

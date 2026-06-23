@@ -1,41 +1,94 @@
 "use client";
 
 import { useState } from "react";
+import {
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  usePublicClient,
+} from "wagmi";
+import { parseUnits, decodeEventLog, type Hash } from "viem";
+import { B20_FACTORY_ADDRESS, B20_FACTORY_ABI } from "@/config/b20";
 
-export interface DeployInput {
+export interface DeployParams {
   name: string;
   symbol: string;
-  maxSupply?: string;
+  decimals: number;
+  supplyCap: string;
+  adminAddress: `0x${string}`;
 }
 
-export interface DeployResponse {
-  address?: string;
-  txHash?: string;
-  raw?: string;
+export interface UseDeployB20 {
+  deploy: (params: DeployParams) => Promise<void>;
+  isPending: boolean;
+  isConfirming: boolean;
+  isSuccess: boolean;
+  tokenAddress?: `0x${string}`;
+  txHash?: Hash;
   error?: string;
 }
 
-/** Deploy a B20 token via the /api/deploy backend (runs base-forge). */
-export function useDeployB20() {
-  const [isDeploying, setIsDeploying] = useState(false);
-  const [result, setResult] = useState<DeployResponse | null>(null);
+/** Deploy a new B20 token via the factory and parse the deployed address. */
+export function useDeployB20(): UseDeployB20 {
+  const publicClient = usePublicClient();
+  const { writeContractAsync, isPending } = useWriteContract();
+  const [txHash, setTxHash] = useState<Hash | undefined>();
+  const [tokenAddress, setTokenAddress] = useState<`0x${string}` | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
-  async function deploy(input: DeployInput) {
-    setIsDeploying(true);
-    setResult(null);
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
+
+  async function deploy(params: DeployParams): Promise<void> {
+    setError(undefined);
+    setTokenAddress(undefined);
     try {
-      const res = await fetch("/api/deploy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+      const cap = parseUnits(params.supplyCap || "0", params.decimals);
+      const hash = await writeContractAsync({
+        address: B20_FACTORY_ADDRESS,
+        abi: B20_FACTORY_ABI,
+        functionName: "createB20",
+        args: [
+          params.name,
+          params.symbol,
+          params.decimals,
+          cap,
+          params.adminAddress,
+        ],
       });
-      const data: DeployResponse = await res.json();
-      setResult(data);
-      return data;
-    } finally {
-      setIsDeploying(false);
+      setTxHash(hash);
+
+      if (publicClient) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        for (const log of receipt.logs) {
+          try {
+            const parsed = decodeEventLog({
+              abi: B20_FACTORY_ABI,
+              data: log.data,
+              topics: log.topics,
+            });
+            if (parsed.eventName === "B20Created") {
+              const args = parsed.args as unknown as { token: `0x${string}` };
+              setTokenAddress(args.token);
+              break;
+            }
+          } catch {
+            // not the event we want — skip
+          }
+        }
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "deploy failed");
     }
   }
 
-  return { deploy, isDeploying, result };
+  return {
+    deploy,
+    isPending,
+    isConfirming,
+    isSuccess,
+    tokenAddress,
+    txHash,
+    error,
+  };
 }
