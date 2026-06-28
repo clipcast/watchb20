@@ -8,6 +8,9 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "WatchB20 | B20 Token Launcher on Base",
   description: "Deploy, track, mint, and transfer B20 tokens on Base",
+  other: {
+    "virtual-protocol-site-verification": "bf1a98520986ee21221195a0fe4a8232",
+  },
 };
 
 export default function RootLayout({
